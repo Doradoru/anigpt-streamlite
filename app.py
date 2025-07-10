@@ -9,7 +9,12 @@ from datetime import datetime
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
 client = gspread.authorize(creds)
-sheet = client.open("AniGPT_DB")
+try:
+    sheet = client.open("AniGPT_DB")
+except Exception as e:
+    st.error(f"❌ Sheet open error: {e}")
+    st.stop()
+
 
 # Save functions
 def save_to_memory(prompt, response):
