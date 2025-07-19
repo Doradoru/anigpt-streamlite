@@ -1,96 +1,77 @@
 import streamlit as st
 import gspread
 from datetime import datetime
-import json
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
+import pandas as pd
 
-# --- Load credentials from secrets ---
-json_key = json.loads(st.secrets["GOOGLE_SHEET_JSON"])
+# Streamlit page config
+st.set_page_config(page_title="AniGPT v2", layout="centered")
+st.title("🧠 AniGPT v2 – Auto Tab Detection AI")
 
-scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-credentials = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
-client = gspread.authorize(credentials)
+# Load credentials from secrets
+json_key = st.secrets["GOOGLE_SHEET_JSON"]
+scope = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+credentials = Credentials.from_service_account_info(json_key, scopes=scope)
+gc = gspread.authorize(credentials)
 
-# --- Open your sheet ---
-spreadsheet = client.open("AniGPT_DB")  # Your Google Sheet name
+# Open the sheet
+SHEET_NAME = "AniGPT_DB"
+try:
+    sheet = gc.open(SHEET_NAME)
+except Exception as e:
+    st.error(f"❌ Failed to open sheet: {e}")
+    st.stop()
 
-# --- All required tabs ---
-required_tabs = [
-    "Memory", "Mood logs", "Daily journal", "Learning", "Reminders",
-    "Life goals", "Voice logs", "Anibook outline", "Improvement notes",
-    "Quotes", "User facts", "Task done", "Auto backup logs"
-]
-
-# --- Ensure all tabs exist ---
-existing_tabs = [ws.title for ws in spreadsheet.worksheets()]
-for tab in required_tabs:
-    if tab not in existing_tabs:
-        spreadsheet.add_worksheet(title=tab, rows="100", cols="20")
-
-# --- Function: Ensure required headers exist ---
-def ensure_headers(ws, headers):
-    current = ws.row_values(1)
-    for i, h in enumerate(headers):
-        if h not in current:
-            ws.update_cell(1, len(current) + 1, h)
-            current.append(h)
-
-# --- Function: Smart tab detection based on input ---
+# Tab detection function
 def detect_tab(text):
     text = text.lower()
-    if any(word in text for word in ["happy", "sad", "angry", "tired", "excited", "mood"]):
+    if any(word in text for word in ["sad", "happy", "angry", "depressed", "joy", "tired"]):
         return "Mood logs"
-    elif any(word in text for word in ["learned", "sikh", "understood", "study"]):
+    elif any(word in text for word in ["learn", "sikh", "understand", "studied", "coding"]):
         return "Learning"
-    elif any(word in text for word in ["goal", "target", "dream", "future"]):
+    elif any(word in text for word in ["goal", "target", "mission", "aim"]):
         return "Life goals"
-    elif any(word in text for word in ["note", "improve", "fix", "bad habit"]):
+    elif any(word in text for word in ["journal", "summary", "din", "routine"]):
+        return "Daily journal"
+    elif any(word in text for word in ["voice", "mic", "recorded"]):
+        return "Voice logs"
+    elif any(word in text for word in ["task", "kaam", "done", "complete"]):
+        return "Task done"
+    elif any(word in text for word in ["note", "habit", "improve"]):
         return "Improvement notes"
     elif any(word in text for word in ["quote", "motivation", "line"]):
         return "Quotes"
-    elif any(word in text for word in ["journal", "summary", "reflection", "day", "din"]):
-        return "Daily journal"
-    elif any(word in text for word in ["task", "kaam", "done", "complete"]):
-        return "Task done"
-    elif any(word in text for word in ["voice", "audio", "mic", "record"]):
-        return "Voice logs"
-    elif any(word in text for word in ["remind", "yaad", "kal", "aaj"]):
+    elif any(word in text for word in ["anne", "ani", "me", "facts", "truth"]):
+        return "User facts"
+    elif any(word in text for word in ["backup", "sync", "auto"]):
+        return "Auto backup logs"
+    elif any(word in text for word in ["chapter", "book", "outline"]):
+        return "Anibook outline"
+    elif any(word in text for word in ["remind", "yaad dilao", "tomorrow", "reminder"]):
         return "Reminders"
     else:
         return "Memory"
 
-# --- Streamlit UI ---
-st.title("🧠 AniGPT v2 – Smart Input Saver")
+# Ensure tab exists and has User column
+def ensure_tab(tab_name):
+    try:
+        ws = sheet.worksheet(tab_name)
+    except:
+        ws = sheet.add_worksheet(title=tab_name, rows="100", cols="10")
+        ws.append_row(["Date", "User", "Content"])
+    return ws
 
-# Dropdown to select user
-user = st.selectbox("👤 Select User", ["Ani", "Anne"])
+# User selector
+user = st.selectbox("👤 Select user", ["Ani", "Anne"])
 
-# Text input
-user_input = st.text_area("💬 Enter your thought, journal, task, or anything...")
+# Input form
+with st.form("data_entry_form"):
+    user_input = st.text_area("📝 Write something...", height=150)
+    submit = st.form_submit_button("💾 Save Entry")
 
-if st.button("💾 Save to Google Sheet"):
-    if user_input.strip() == "":
-        st.warning("Please enter something before submitting.")
-    else:
-        tab = detect_tab(user_input)
-        ws = spreadsheet.worksheet(tab)
-
-        # Prepare row
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        headers = ws.row_values(1)
-
-        # Ensure required columns exist
-        required_columns = ["User", "Date", "Input"]
-        ensure_headers(ws, required_columns)
-
-        row = []
-        for col in required_columns:
-            if col == "User":
-                row.append(user)
-            elif col == "Date":
-                row.append(now)
-            elif col == "Input":
-                row.append(user_input)
-
-        ws.append_row(row)
-        st.success(f"✅ Saved to **{tab}** tab.")
+if submit and user_input:
+    tab = detect_tab(user_input)
+    ws = ensure_tab(tab)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    ws.append_row([now, user, user_input])
+    st.success(f"✅ Saved to '{tab}' for {user}")
