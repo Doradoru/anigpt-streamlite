@@ -1,95 +1,99 @@
-# [app.py code here — main UI code]
-# NOTE: I'll give full app.py code again if needed
 import streamlit as st
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import json
+from google.oauth2.service_account import Credentials
 
-# Auth
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-client = gspread.authorize(creds)
+# ---------------------- CONFIG ----------------------
+st.set_page_config(page_title="AniGPT v2.0", page_icon="🧠")
+
+st.title("🧠 AniGPT v2.0 – Personal Smart Logger")
+
+# ------------------- SECRETS SETUP ------------------
+json_key = st.secrets["GOOGLE_SHEET_JSON"]
+json_data = json.loads(json_key)
+
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+credentials = Credentials.from_service_account_info(json_data, scopes=scopes)
+
+gc = gspread.authorize(credentials)
+
+# ----------------- CONNECT TO SHEET -----------------
+SHEET_NAME = "AniGPT_DB"
+
 try:
-    sheet = client.open("AniGPT_DB")
+    sh = gc.open(SHEET_NAME)
 except Exception as e:
-    st.error(f"❌ Sheet open error: {e}")
+    st.error(f"❌ Failed to open sheet: {e}")
     st.stop()
 
+# ------------------ SHEET TABS ----------------------
+REQUIRED_TABS = {
+    "Memory": ["Date", "User", "Memory"],
+    "Mood logs": ["Date", "User", "Mood", "Trigger"],
+    "Daily journal": ["Date", "User", "Summary", "Keywords"],
+    "Learning": ["Date", "User", "WhatWasLearned", "Context"],
+    "Reminders": ["Task", "Date", "Time", "Status", "User"],
+    "Life goals": ["Goal", "Category", "Target Date", "Progress", "User"],
+    "Voice logs": ["Date", "User", "Transcript"],
+    "Anibook outline": ["Chapter", "Idea", "User"],
+    "Improvement notes": ["Date", "User", "Note"],
+    "Quotes": ["Quote", "By", "User"],
+    "User facts": ["Fact", "User"],
+    "Task done": ["Task", "Date", "User"],
+    "Auto backup logs": ["Timestamp", "Details", "User"]
+}
 
-# Save functions
-def save_to_memory(prompt, response):
-    sheet.worksheet("Memory").append_row([prompt, response, datetime.now().strftime("%Y-%m-%d %H:%M:%S")])
+# ---------------- AUTO TAB + HEADER CREATOR ---------
+def ensure_tabs():
+    existing_tabs = [ws.title for ws in sh.worksheets()]
+    for tab, headers in REQUIRED_TABS.items():
+        if tab not in existing_tabs:
+            ws = sh.add_worksheet(title=tab, rows=100, cols=len(headers))
+            ws.append_row(headers)
+        else:
+            ws = sh.worksheet(tab)
+            current_headers = ws.row_values(1)
+            for h in headers:
+                if h not in current_headers:
+                    ws.update_cell(1, len(current_headers) + 1, h)
+                    current_headers.append(h)
 
-def save_mood(mood, trigger=""):
-    sheet.worksheet("MoodLogs").append_row([datetime.now().strftime("%Y-%m-%d"), mood, trigger])
+ensure_tabs()
 
-def add_to_journal(summary, keywords=""):
-    sheet.worksheet("DailyJournal").append_row([datetime.now().strftime("%Y-%m-%d"), summary, keywords])
+# ---------------------- UI --------------------------
 
-def add_learning(learning, context=""):
-    sheet.worksheet("Learnings").append_row([datetime.now().strftime("%Y-%m-%d"), learning, context])
+st.subheader("🧑 Select User")
+user = st.selectbox("Who is using AniGPT?", ["Ani", "Anne"])
 
-def add_reminder(task, date, time, status="Pending"):
-    sheet.worksheet("Reminders").append_row([task, date, time, status])
+input_text = st.text_area("📝 Enter your message (memory, mood, journal...)", height=150)
 
-def add_goal(goal, category, deadline, progress="Not Started"):
-    sheet.worksheet("LifeGoals").append_row([goal, category, deadline, progress])
+submit = st.button("💾 Save to Google Sheet")
 
-# UI
-st.set_page_config(page_title="AniGPT - Emotional AI", layout="centered")
-st.title("🤖 AniGPT - Emotional & Self-Learning AI")
-st.markdown("Jitna tu bolega, utna main yaad rakhunga 💡")
+# --------------------- SAVE LOGIC -------------------
 
-# Prompt Input
-st.subheader("💬 Ask Something:")
-prompt = st.text_input("You:", placeholder="Mujhse kuch bhi poochho...")
+if submit and input_text.strip():
+    now = datetime.now()
+    date_str = now.strftime("%Y-%m-%d %H:%M")
 
-if prompt:
-    response = f"AniGPT ka jawaab: '{prompt[::-1]}' 😄"  # Dummy reverse logic
-    st.success(response)
-    save_to_memory(prompt, response)
+    detected = False
 
-# Mood
-st.subheader("😊 How Are You Feeling?")
-mood = st.selectbox("Mood", ["Happy", "Sad", "Neutral", "Excited", "Tired", "Angry"])
-trigger = st.text_input("Trigger / Reason", placeholder="Mood ka reason likho...")
-if st.button("Save Mood"):
-    save_mood(mood, trigger)
-    st.success("Mood saved!")
+    for tab, headers in REQUIRED_TABS.items():
+        if any(h.lower() in input_text.lower() for h in headers if h not in ["User", "Date"]):
+            row = []
+            for h in headers:
+                if h == "Date":
+                    row.append(date_str)
+                elif h == "User":
+                    row.append(user)
+                else:
+                    row.append(input_text)
+            ws = sh.worksheet(tab)
+            ws.append_row(row)
+            st.success(f"✅ Saved to `{tab}`!")
+            detected = True
+            break
 
-# Journal
-st.subheader("📓 Daily Journal")
-journal = st.text_area("Write your thoughts for today...")
-keywords = st.text_input("Keywords (optional)")
-if st.button("Save Journal"):
-    add_to_journal(journal, keywords)
-    st.success("Journal saved!")
+    if not detected:
+        st.warning("⚠️ Could not detect category from input. Please be specific (like 'mood', 'quote', 'task').")
 
-# Learning
-st.subheader("📘 What AniGPT Learned Today")
-learning = st.text_input("New learning for AniGPT")
-context = st.text_input("Context")
-if st.button("Add Learning"):
-    add_learning(learning, context)
-    st.success("Learning saved!")
-
-# Reminder
-st.subheader("⏰ Add Reminder")
-task = st.text_input("Reminder Task")
-rem_date = st.date_input("Date")
-rem_time = st.time_input("Time")
-if st.button("Add Reminder"):
-    add_reminder(task, rem_date.strftime("%Y-%m-%d"), rem_time.strftime("%H:%M"))
-    st.success("Reminder added!")
-
-# Life Goals
-st.subheader("🎯 Life Goal Tracker")
-goal = st.text_input("Your Goal")
-category = st.text_input("Goal Category (Health, Career, etc.)")
-deadline = st.date_input("Target Date")
-if st.button("Add Goal"):
-    add_goal(goal, category, deadline.strftime("%Y-%m-%d"))
-    st.success("Goal saved!")
-
-st.markdown("---")
-st.markdown("🔒 All your data is stored in your private Google Sheet.")
