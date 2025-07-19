@@ -2,98 +2,95 @@ import streamlit as st
 import gspread
 from datetime import datetime
 import json
-from google.oauth2.service_account import Credentials
+from oauth2client.service_account import ServiceAccountCredentials
 
-# ---------------------- CONFIG ----------------------
-st.set_page_config(page_title="AniGPT v2.0", page_icon="🧠")
+# --- Load credentials from secrets ---
+json_key = json.loads(st.secrets["GOOGLE_SHEET_JSON"])
 
-st.title("🧠 AniGPT v2.0 – Personal Smart Logger")
+scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+credentials = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
+client = gspread.authorize(credentials)
 
-# ------------------- SECRETS SETUP ------------------
-json_key = st.secrets["GOOGLE_SHEET_JSON"]
-json_data = json.loads(json_key)
+# --- Open your sheet ---
+spreadsheet = client.open("AniGPT_DB")  # Your Google Sheet name
 
-scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-credentials = Credentials.from_service_account_info(json_data, scopes=scopes)
+# --- All required tabs ---
+required_tabs = [
+    "Memory", "Mood logs", "Daily journal", "Learning", "Reminders",
+    "Life goals", "Voice logs", "Anibook outline", "Improvement notes",
+    "Quotes", "User facts", "Task done", "Auto backup logs"
+]
 
-gc = gspread.authorize(credentials)
+# --- Ensure all tabs exist ---
+existing_tabs = [ws.title for ws in spreadsheet.worksheets()]
+for tab in required_tabs:
+    if tab not in existing_tabs:
+        spreadsheet.add_worksheet(title=tab, rows="100", cols="20")
 
-# ----------------- CONNECT TO SHEET -----------------
-SHEET_NAME = "AniGPT_DB"
+# --- Function: Ensure required headers exist ---
+def ensure_headers(ws, headers):
+    current = ws.row_values(1)
+    for i, h in enumerate(headers):
+        if h not in current:
+            ws.update_cell(1, len(current) + 1, h)
+            current.append(h)
 
-try:
-    sh = gc.open(SHEET_NAME)
-except Exception as e:
-    st.error(f"❌ Failed to open sheet: {e}")
-    st.stop()
+# --- Function: Smart tab detection based on input ---
+def detect_tab(text):
+    text = text.lower()
+    if any(word in text for word in ["happy", "sad", "angry", "tired", "excited", "mood"]):
+        return "Mood logs"
+    elif any(word in text for word in ["learned", "sikh", "understood", "study"]):
+        return "Learning"
+    elif any(word in text for word in ["goal", "target", "dream", "future"]):
+        return "Life goals"
+    elif any(word in text for word in ["note", "improve", "fix", "bad habit"]):
+        return "Improvement notes"
+    elif any(word in text for word in ["quote", "motivation", "line"]):
+        return "Quotes"
+    elif any(word in text for word in ["journal", "summary", "reflection", "day", "din"]):
+        return "Daily journal"
+    elif any(word in text for word in ["task", "kaam", "done", "complete"]):
+        return "Task done"
+    elif any(word in text for word in ["voice", "audio", "mic", "record"]):
+        return "Voice logs"
+    elif any(word in text for word in ["remind", "yaad", "kal", "aaj"]):
+        return "Reminders"
+    else:
+        return "Memory"
 
-# ------------------ SHEET TABS ----------------------
-REQUIRED_TABS = {
-    "Memory": ["Date", "User", "Memory"],
-    "Mood logs": ["Date", "User", "Mood", "Trigger"],
-    "Daily journal": ["Date", "User", "Summary", "Keywords"],
-    "Learning": ["Date", "User", "WhatWasLearned", "Context"],
-    "Reminders": ["Task", "Date", "Time", "Status", "User"],
-    "Life goals": ["Goal", "Category", "Target Date", "Progress", "User"],
-    "Voice logs": ["Date", "User", "Transcript"],
-    "Anibook outline": ["Chapter", "Idea", "User"],
-    "Improvement notes": ["Date", "User", "Note"],
-    "Quotes": ["Quote", "By", "User"],
-    "User facts": ["Fact", "User"],
-    "Task done": ["Task", "Date", "User"],
-    "Auto backup logs": ["Timestamp", "Details", "User"]
-}
+# --- Streamlit UI ---
+st.title("🧠 AniGPT v2 – Smart Input Saver")
 
-# ---------------- AUTO TAB + HEADER CREATOR ---------
-def ensure_tabs():
-    existing_tabs = [ws.title for ws in sh.worksheets()]
-    for tab, headers in REQUIRED_TABS.items():
-        if tab not in existing_tabs:
-            ws = sh.add_worksheet(title=tab, rows=100, cols=len(headers))
-            ws.append_row(headers)
-        else:
-            ws = sh.worksheet(tab)
-            current_headers = ws.row_values(1)
-            for h in headers:
-                if h not in current_headers:
-                    ws.update_cell(1, len(current_headers) + 1, h)
-                    current_headers.append(h)
+# Dropdown to select user
+user = st.selectbox("👤 Select User", ["Ani", "Anne"])
 
-ensure_tabs()
+# Text input
+user_input = st.text_area("💬 Enter your thought, journal, task, or anything...")
 
-# ---------------------- UI --------------------------
+if st.button("💾 Save to Google Sheet"):
+    if user_input.strip() == "":
+        st.warning("Please enter something before submitting.")
+    else:
+        tab = detect_tab(user_input)
+        ws = spreadsheet.worksheet(tab)
 
-st.subheader("🧑 Select User")
-user = st.selectbox("Who is using AniGPT?", ["Ani", "Anne"])
+        # Prepare row
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        headers = ws.row_values(1)
 
-input_text = st.text_area("📝 Enter your message (memory, mood, journal...)", height=150)
+        # Ensure required columns exist
+        required_columns = ["User", "Date", "Input"]
+        ensure_headers(ws, required_columns)
 
-submit = st.button("💾 Save to Google Sheet")
+        row = []
+        for col in required_columns:
+            if col == "User":
+                row.append(user)
+            elif col == "Date":
+                row.append(now)
+            elif col == "Input":
+                row.append(user_input)
 
-# --------------------- SAVE LOGIC -------------------
-
-if submit and input_text.strip():
-    now = datetime.now()
-    date_str = now.strftime("%Y-%m-%d %H:%M")
-
-    detected = False
-
-    for tab, headers in REQUIRED_TABS.items():
-        if any(h.lower() in input_text.lower() for h in headers if h not in ["User", "Date"]):
-            row = []
-            for h in headers:
-                if h == "Date":
-                    row.append(date_str)
-                elif h == "User":
-                    row.append(user)
-                else:
-                    row.append(input_text)
-            ws = sh.worksheet(tab)
-            ws.append_row(row)
-            st.success(f"✅ Saved to `{tab}`!")
-            detected = True
-            break
-
-    if not detected:
-        st.warning("⚠️ Could not detect category from input. Please be specific (like 'mood', 'quote', 'task').")
-
+        ws.append_row(row)
+        st.success(f"✅ Saved to **{tab}** tab.")
