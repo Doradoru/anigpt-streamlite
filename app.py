@@ -110,6 +110,11 @@ if submit and user_input.strip():
     else:
         headers = ["Date", "Memory", "User"]
         data_row = [date_str, user_input, user]
+    journal_keywords = ["subah", "shaam", "utha", "soya", "kaam kiya", "coding", "routine", "din", "schedule"]
+...
+elif any(word in user_input.lower() for word in journal_keywords):
+    sheet_name = "Daily journal"
+
 
     # Ensure tab and headers
     ensure_headers(tab, headers)
