@@ -1,124 +1,124 @@
 import streamlit as st
 import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 import json
-from google.oauth2.service_account import Credentials
-import pandas as pd
 
-# ---- AUTH ----
-json_key = json.loads(st.secrets["GOOGLE_SHEET_JSON"])
+# --------------------- CONFIGURATION ---------------------
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-credentials = Credentials.from_service_account_info(json_key, scopes=scope)
-client = gspread.authorize(credentials)
+json_key = json.loads(st.secrets["GOOGLE_SHEET_JSON"])
+creds = ServiceAccountCredentials.from_json_keyfile_dict(json_key, scope)
+client = gspread.authorize(creds)
 
-# ---- SHEET INFO ----
-SHEET_NAME = "AniGPT_DB"
+sheet_name = "AniGPT_DB"
 try:
-    sheet = client.open(SHEET_NAME)
-except Exception as e:
-    st.error(f"❌ Failed to open sheet: {e}")
+    sheet = client.open(sheet_name)
+except:
+    st.error(f"❌ Failed to open sheet: {sheet_name}")
     st.stop()
 
-# ---- TAB METADATA ----
-tab_info = {
-    "Memory": ["yaad", "remember", "past", "old", "nostalgia"],
-    "Mood logs": ["happy", "sad", "angry", "mood", "tension", "frustrated"],
-    "Daily journal": ["aaj", "today", "diary", "journal", "routine"],
-    "Learning": ["learn", "padhai", "study", "python", "course", "sikha"],
-    "Reminders": ["remind", "yaad dilao", "kal", "appointment", "task"],
-    "Life goals": ["goal", "target", "sapna", "dream", "future"],
-    "Voice logs": ["voice", "audio", "record", "bolkar"],
-    "Anibook outline": ["book", "chapter", "outline", "summary"],
-    "Improvement notes": ["improve", "habit", "change", "better"],
-    "Quotes": ["quote", "saying", "kahavat", "inspiration"],
-    "User facts": ["ani", "anne", "pasand", "dislike", "favourite"],
-    "Task done": ["complete", "done", "kaam khatam", "finished"],
-    "Auto backup logs": ["backup", "auto", "saved", "sync"]
+# --------------------- SHEET STRUCTURE ---------------------
+required_tabs = {
+    "Memory": ["Date", "User", "Memory"],
+    "Mood logs": ["Date", "User", "Mood", "Trigger"],
+    "Daily journal": ["Date", "User", "Summary", "Keywords"],
+    "Learning": ["Date", "User", "WhatWasLearned", "Context"],
+    "Reminders": ["Task", "Date", "Time", "Status", "User"],
+    "Life goals": ["Goal", "Category", "Target Date", "Progress", "User"],
+    "Voice logs": ["Date", "User", "Transcript"],
+    "Anibook outline": ["Chapter", "Description", "User"],
+    "Improvement notes": ["Date", "User", "Note"],
+    "Quotes": ["Date", "User", "Quote"],
+    "User facts": ["Fact", "User"],
+    "Task done": ["Date", "User", "Task"],
+    "Auto backup logs": ["Date", "User", "BackupStatus"]
 }
 
-# ---- UI ----
-st.title("🧠 AniGPT v2.0 – Personal Dashboard")
-user = st.selectbox("👤 Select User", ["Ani", "Anne"])
-user_input = st.text_area("📝 Type your message below:")
-submit = st.button("💾 Save Entry")
-
-# ---- TAB DETECTION FUNCTION ----
-def detect_tab(text):
-    text_lower = text.lower()
-    for tab, keywords in tab_info.items():
-        for kw in keywords:
-            if kw in text_lower:
-                return tab
-    return "Memory"  # fallback
-
-# ---- ENSURE REQUIRED COLUMNS EXIST ----
-def ensure_headers(tab, headers):
+# Ensure tabs and headers
+for tab, headers in required_tabs.items():
     try:
         worksheet = sheet.worksheet(tab)
     except:
         worksheet = sheet.add_worksheet(title=tab, rows="100", cols="20")
-    existing_headers = worksheet.row_values(1)
+    current_headers = worksheet.row_values(1)
     for i, h in enumerate(headers):
-        if h not in existing_headers:
-            worksheet.update_cell(1, len(existing_headers) + 1, h)
-            existing_headers.append(h)
+        if h not in current_headers:
+            worksheet.update_cell(1, len(current_headers) + 1, h)
+            current_headers.append(h)
 
-# ---- SUBMIT LOGIC ----
-if submit and user_input.strip():
+# --------------------- UI ---------------------
+st.title("🧠 AniGPT v2 – Your Personal Learning Assistant")
+
+user = st.selectbox("👤 Select User", ["Ani", "Anne"])
+user_input = st.text_area("💬 Enter your input below:")
+submit = st.button("💾 Save to Google Sheet")
+
+# --------------------- DETECTION LOGIC ---------------------
+def detect_tab(text):
+    text = text.lower()
+    if any(word in text for word in ["udaas", "khushi", "sad", "happy", "mood"]):
+        return "Mood logs"
+    elif any(word in text for word in ["subah", "shaam", "utha", "soya", "routine", "kaam", "coding"]):
+        return "Daily journal"
+    elif any(word in text for word in ["learn", "seekha", "sikha", "understood", "pada", "padha"]):
+        return "Learning"
+    elif any(word in text for word in ["call", "remind", "yaad", "meeting", "alarm", "karna"]):
+        return "Reminders"
+    elif any(word in text for word in ["goal", "target", "dream", "sapna", "vision"]):
+        return "Life goals"
+    elif any(word in text for word in ["recorded", "audio", "voice", "mic"]):
+        return "Voice logs"
+    elif any(word in text for word in ["chapter", "book", "anibook", "outline"]):
+        return "Anibook outline"
+    elif any(word in text for word in ["improve", "sudhar", "mistake", "fix", "habit"]):
+        return "Improvement notes"
+    elif any(word in text for word in ["quote", "thought", "anmol", "line"]):
+        return "Quotes"
+    elif any(word in text for word in ["fact", "likes", "dislikes", "ani", "anne pasand"]):
+        return "User facts"
+    elif any(word in text for word in ["done", "complete", "finished", "kaam ho gaya"]):
+        return "Task done"
+    elif any(word in text for word in ["backup", "save", "copy"]):
+        return "Auto backup logs"
+    else:
+        return "Memory"
+
+# --------------------- SAVE DATA ---------------------
+if submit and user_input:
     tab = detect_tab(user_input)
+    ws = sheet.worksheet(tab)
+    headers = ws.row_values(1)
     date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    data_row = []
-    if tab == "Mood logs":
-        headers = ["Date", "Mood", "Trigger", "User"]
-        mood = "Happy" if "happy" in user_input.lower() else "Unknown"
-        trigger = user_input[:30]
-        data_row = [date_str, mood, trigger, user]
-    elif tab == "Daily journal":
-        headers = ["Date", "Summary", "Keywords", "User"]
-        data_row = [date_str, user_input, "auto", user]
-    elif tab == "Learning":
-        headers = ["Date", "WhatWasLearned", "Context", "User"]
-        data_row = [date_str, user_input, "auto", user]
-    elif tab == "Reminders":
-        headers = ["Task", "Date", "Time", "Status", "User"]
-        data_row = [user_input, date_str.split()[0], date_str.split()[1], "Pending", user]
-    elif tab == "Life goals":
-        headers = ["Goal", "Category", "Target Date", "Progress", "User"]
-        data_row = [user_input, "Personal", "N/A", "0%", user]
-    elif tab == "Voice logs":
-        headers = ["Date", "Note", "User"]
-        data_row = [date_str, user_input, user]
-    elif tab == "Anibook outline":
-        headers = ["Chapter", "Summary", "User"]
-        data_row = ["Auto", user_input, user]
-    elif tab == "Improvement notes":
-        headers = ["Date", "Note", "User"]
-        data_row = [date_str, user_input, user]
-    elif tab == "Quotes":
-        headers = ["Quote", "Author", "User"]
-        data_row = [user_input, "Unknown", user]
-    elif tab == "User facts":
-        headers = ["Fact", "User"]
-        data_row = [user_input, user]
-    elif tab == "Task done":
-        headers = ["Task", "Status", "Date", "User"]
-        data_row = [user_input, "Done", date_str, user]
-    elif tab == "Auto backup logs":
-        headers = ["Log", "Time", "User"]
-        data_row = [user_input, date_str, user]
-    else:
-        headers = ["Date", "Memory", "User"]
-        data_row = [date_str, user_input, user]
-    journal_keywords = ["subah", "shaam", "utha", "soya", "kaam kiya", "coding", "routine", "din", "schedule"]
-...
-elif any(word in user_input.lower() for word in journal_keywords):
-    sheet_name = "Daily journal"
+    # Map columns to data
+    data_dict = {
+        "Date": date_str,
+        "User": user,
+        "Memory": user_input,
+        "Mood": user_input,
+        "Trigger": "",
+        "Summary": user_input,
+        "Keywords": "",
+        "WhatWasLearned": user_input,
+        "Context": "",
+        "Task": user_input,
+        "Time": "",
+        "Status": "Pending",
+        "Goal": user_input,
+        "Category": "",
+        "Target Date": "",
+        "Progress": "",
+        "Transcript": user_input,
+        "Chapter": "",
+        "Description": user_input,
+        "Note": user_input,
+        "Quote": user_input,
+        "Fact": user_input,
+        "Task": user_input,
+        "BackupStatus": "Saved"
+    }
 
-
-    # Ensure tab and headers
-    ensure_headers(tab, headers)
-    worksheet = sheet.worksheet(tab)
-    worksheet.append_row(data_row)
-    st.success(f"✅ Entry saved to '{tab}' tab.")
+    row = [data_dict.get(h, "") for h in headers]
+    ws.append_row(row)
+    st.success(f"✅ Saved to: {tab}")
 
